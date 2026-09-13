@@ -1,0 +1,21 @@
+{
+  "name": "shop-billing-worker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@tsndr/cloudflare-worker-jwt": "^3.2.3",
+    "bcryptjs": "^2.4.3",
+    "itty-router": "^5.0.18"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241106.0",
+    "@types/bcryptjs": "^2.4.6",
+    "typescript": "^5.5.2",
+    "wrangler": "^4.86.0"
+  }
+}
