@@ -1,20 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList } from 'react-native';
-import { getTodaySales } from '../lib/db';
+import { getOwnSales } from '../lib/db';
 import { useAuthStore } from '../lib/store';
 import { Clock, CheckCircle } from 'lucide-react-native';
 
 export default function HistoryScreen() {
   const [sales, setSales] = useState<any[]>([]);
+  const [period, setPeriod] = useState<'today' | 'week'>('today');
   const { userId } = useAuthStore();
 
   useEffect(() => {
     if (userId) loadHistory();
-  }, [userId]);
+  }, [userId, period]);
 
   const loadHistory = async () => {
     try {
-      const data = await getTodaySales(userId!);
+      const data = await getOwnSales(userId!, period);
       setSales(data as any[]);
     } catch (e) {
       console.error(e);
@@ -24,8 +25,15 @@ export default function HistoryScreen() {
   return (
     <View className="flex-1 bg-zinc-50 px-4 pt-4">
       <View className="mb-4 flex-row justify-between items-end">
-        <Text className="text-xl font-bold text-zinc-900">Today's Sales</Text>
+        <Text className="text-xl font-bold text-zinc-900">{period === 'today' ? "Today's Sales" : 'This Week'}</Text>
         <Text className="text-zinc-500">{sales.length} orders</Text>
+      </View>
+      <View className="flex-row gap-2 mb-4">
+        {(['today', 'week'] as const).map((value) => (
+          <Text key={value} onPress={() => setPeriod(value)} className={`px-4 py-2 rounded-full font-medium ${period === value ? 'bg-indigo-600 text-white' : 'bg-white text-zinc-600'}`}>
+            {value === 'today' ? 'Today' : 'This week'}
+          </Text>
+        ))}
       </View>
 
       <FlatList
@@ -56,7 +64,7 @@ export default function HistoryScreen() {
                 ) : (
                   <View className="w-2 h-2 rounded-full bg-amber-500 mr-1" />
                 )}
-                <Text className={\`ml-1 text-sm \${item.synced ? 'text-green-600' : 'text-amber-600'}\`}>
+                <Text className={`ml-1 text-sm ${item.synced ? 'text-green-600' : 'text-amber-600'}`}>
                   {item.synced ? 'Synced' : 'Pending Sync'}
                 </Text>
               </View>

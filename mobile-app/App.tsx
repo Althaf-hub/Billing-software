@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import './global.css';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -13,6 +14,7 @@ import BillingScreen from './src/screens/BillingScreen';
 import CustomersScreen from './src/screens/CustomersScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import SyncIndicator from './src/components/SyncIndicator';
+import { syncNow } from './src/lib/sync';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -75,6 +77,13 @@ export default function App() {
     }
     setup();
   }, []);
+
+  useEffect(() => {
+    if (!isReady || !jwt) return;
+    void syncNow().catch(() => {
+      // Offline use is expected; the header keeps the queued-sale status visible.
+    });
+  }, [isReady, jwt]);
 
   if (!isReady) {
     return (

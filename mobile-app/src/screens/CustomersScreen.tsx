@@ -50,7 +50,7 @@ export default function CustomersScreen() {
             </View>
             <View className="items-end">
               <Text className="text-xs text-zinc-500 mb-1">Credit Balance</Text>
-              <Text className={\`font-bold text-lg \${item.credit_balance > 0 ? 'text-red-500' : 'text-green-600'}\`}>
+              <Text className={`font-bold text-lg ${item.credit_balance > 0 ? 'text-red-500' : 'text-green-600'}`}>
                 ₹{item.credit_balance.toFixed(2)}
               </Text>
             </View>

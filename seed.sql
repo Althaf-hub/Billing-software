@@ -12,13 +12,13 @@ INSERT INTO shops (id, name, owner_email, logo_url, created_at) VALUES
 -- admin  password: Test@1234  (bcrypt hash)
 INSERT INTO users (id, shop_id, name, username, password_hash, role, created_at) VALUES
   ('user-admin-001', 'shop-001', 'Store Owner', 'admin',
-   '$2b$10$KIXv3z1s0Q9C5fRqW2Hu0.VY9X8mN4JtLpA6yGkOdH3bRcEwQsMaO',
+   '$2a$10$H4kAQq8oQe/zCmagt037RuWRXh65p55zCzinrMvHpNL9aVrpYenlC',
    'admin', datetime('now'));
 
 -- salesman  password: Test@1234  (bcrypt hash)
 INSERT INTO users (id, shop_id, name, username, password_hash, role, created_at) VALUES
   ('user-sales-001', 'shop-001', 'Ravi Kumar', 'ravi',
-   '$2b$10$KIXv3z1s0Q9C5fRqW2Hu0.VY9X8mN4JtLpA6yGkOdH3bRcEwQsMaO',
+   '$2a$10$H4kAQq8oQe/zCmagt037RuWRXh65p55zCzinrMvHpNL9aVrpYenlC',
    'salesman', datetime('now'));
 
 -- 3. Products (3 samples with barcode + low_stock_threshold)

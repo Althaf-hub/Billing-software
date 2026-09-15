@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
-import { useAuthStore } from '../lib/store';
+import { readJwtClaims, useAuthStore } from '../lib/store';
 import { useNavigation } from '@react-navigation/native';
 
 const API_URL = 'https://shop-billing-worker.althafrahmanmp.workers.dev';
@@ -20,7 +20,7 @@ export default function LoginScreen() {
 
     setIsLoading(true);
     try {
-      const res = await fetch(\`\${API_URL}/auth/login\`, {
+      const res = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
@@ -33,7 +33,8 @@ export default function LoginScreen() {
       const data = await res.json();
       
       // Store auth info
-      await login(data.token, data.shop_id, data.user_id, data.role);
+      const claims = readJwtClaims(data.token);
+      await login(data.token, claims.shop_id, claims.user_id, claims.role);
       
       // Navigate to Billing if salesman, or if admin (though admin is typically desktop)
       navigation.reset({

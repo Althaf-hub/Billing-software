@@ -41,3 +41,19 @@ export const loadAuthState = async () => {
     useAuthStore.setState({ jwt, shopId, userId, role });
   }
 };
+
+export function readJwtClaims(token: string): { user_id: string; shop_id: string; role: string } {
+  const payload = token.split('.')[1];
+  if (!payload) throw new Error('The server returned an invalid session token.');
+  const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+  const json = decodeURIComponent(
+    atob(padded)
+      .split('')
+      .map((character) => `%${(`00${character.charCodeAt(0).toString(16)}`).slice(-2)}`)
+      .join(''),
+  );
+  const claims = JSON.parse(json);
+  if (!claims.user_id || !claims.shop_id || !claims.role) throw new Error('The session token is incomplete.');
+  return claims;
+}

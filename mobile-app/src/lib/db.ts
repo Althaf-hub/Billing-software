@@ -46,6 +46,11 @@ export async function initDb() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS app_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS sales (
       id TEXT PRIMARY KEY,
       shop_id TEXT NOT NULL,
@@ -156,6 +161,96 @@ export async function getTodaySales(userId: string) {
     `SELECT * FROM sales WHERE sold_by = ? AND date(created_at) = date('now') ORDER BY created_at DESC`,
     [userId]
   );
+}
+
+export async function getOwnSales(userId: string, period: 'today' | 'week') {
+  const db = await getDb();
+  const since = period === 'today' ? "date('now')" : "date('now', '-6 days')";
+  return db.getAllAsync(
+    `SELECT * FROM sales WHERE sold_by = ? AND date(created_at) >= ${since} ORDER BY created_at DESC`,
+    [userId],
+  );
+}
+
+export async function findProductByBarcode(barcode: string) {
+  const db = await getDb();
+  return db.getFirstAsync<{ id: string; name: string; price: number; stock_qty: number }>(
+    'SELECT * FROM products WHERE barcode = ?', [barcode],
+  );
+}
+
+export async function addCustomer(shopId: string, name: string, phone: string) {
+  const db = await getDb();
+  const id = uuidv4();
+  await db.runAsync(
+    'INSERT INTO customers (id, shop_id, name, phone, credit_balance) VALUES (?, ?, ?, ?, 0)',
+    [id, shopId, name.trim(), phone.trim() || null],
+  );
+  return id;
+}
+
+export async function getMeta(key: string) {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ value: string }>('SELECT value FROM app_meta WHERE key = ?', [key]);
+  return row?.value ?? null;
+}
+
+export async function setMeta(key: string, value: string) {
+  const db = await getDb();
+  await db.runAsync('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)', [key, value]);
+}
+
+export async function getPendingSales() {
+  const db = await getDb();
+  return db.getAllAsync<{
+    id: string; customer_id: string | null; discount_amount: number; total_amount: number;
+    payment_mode: string; device_id: string | null; created_at: string;
+  }>('SELECT * FROM sales WHERE synced = 0 ORDER BY created_at');
+}
+
+export async function getSaleItems(saleId: string) {
+  const db = await getDb();
+  return db.getAllAsync<{ product_id: string; quantity: number; price_at_sale: number }>(
+    'SELECT product_id, quantity, price_at_sale FROM sale_items WHERE sale_id = ?', [saleId],
+  );
+}
+
+export async function markSalesSynced(saleIds: string[], invoiceNumbers: Record<string, number>) {
+  const db = await getDb();
+  await db.withExclusiveTransactionAsync(async (transaction) => {
+    for (const saleId of saleIds) {
+      await transaction.runAsync(
+        'UPDATE sales SET synced = 1, invoice_number = COALESCE(?, invoice_number) WHERE id = ?',
+        [invoiceNumbers[saleId] ?? null, saleId],
+      );
+      await transaction.runAsync(
+        `UPDATE products SET synced = 1 WHERE id IN (SELECT product_id FROM sale_items WHERE sale_id = ?)`,
+        [saleId],
+      );
+    }
+  });
+}
+
+export async function applyRemoteCatalog(products: any[], customers: any[]) {
+  const db = await getDb();
+  await db.withExclusiveTransactionAsync(async (transaction) => {
+    for (const product of products) {
+      await transaction.runAsync(
+        `INSERT OR REPLACE INTO products (id, shop_id, name, barcode, price, stock_qty, low_stock_threshold, updated_at, synced)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [product.id, product.shop_id, product.name, product.barcode ?? null, product.price, product.stock_qty,
+          product.low_stock_threshold ?? 5, product.updated_at ?? new Date().toISOString()],
+      );
+    }
+    for (const customer of customers) {
+      await transaction.runAsync(
+        `INSERT OR REPLACE INTO customers (id, shop_id, name, phone, credit_balance, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [customer.id, customer.shop_id, customer.name, customer.phone ?? null, customer.credit_balance ?? 0,
+          customer.created_at ?? new Date().toISOString()],
+      );
+    }
+  });
 }
 
 export async function saveSale(sale: any, items: any[]) {
