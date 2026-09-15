@@ -1,16 +1,61 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { Search, ShoppingCart, Plus, Minus, X, CreditCard, Banknote, Smartphone, User, ArrowRight, Share2, AlertCircle } from "lucide-react";
+import { Search, ShoppingCart, Plus, Minus, X, CreditCard, Banknote, Smartphone, User, ArrowRight, Share2, AlertCircle, RefreshCw, WifiOff, CheckCircle2, Clock } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { api, Product } from "../lib/api";
+import { useSyncStatus } from "../lib/sync";
 
 type CartItem = Product & {
   cartQuantity: number;
   itemDiscount: number;
 };
+
+// ── Sync status badge ─────────────────────────────────────────────────────────
+import type { SyncStatus } from "../lib/sync";
+
+function SyncBadge({ status, pendingCount }: { status: SyncStatus; pendingCount: number }) {
+  if (status === "syncing") {
+    return (
+      <p className="text-sm text-blue-500 flex items-center gap-1.5">
+        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+        Syncing…
+      </p>
+    );
+  }
+  if (status === "offline") {
+    return (
+      <p className="text-sm text-red-400 flex items-center gap-1.5">
+        <WifiOff className="w-3.5 h-3.5" />
+        Offline — data saved locally
+      </p>
+    );
+  }
+  if (status === "error") {
+    return (
+      <p className="text-sm text-destructive flex items-center gap-1.5">
+        <AlertCircle className="w-3.5 h-3.5" />
+        Sync error — will retry
+      </p>
+    );
+  }
+  if (pendingCount > 0) {
+    return (
+      <p className="text-sm text-amber-500 flex items-center gap-1.5">
+        <Clock className="w-3.5 h-3.5" />
+        Pending ({pendingCount} record{pendingCount !== 1 ? "s" : ""})
+      </p>
+    );
+  }
+  return (
+    <p className="text-sm text-green-500 flex items-center gap-1.5">
+      <CheckCircle2 className="w-3.5 h-3.5" />
+      Synced ✓
+    </p>
+  );
+}
 
 export default function Billing() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -20,6 +65,7 @@ export default function Billing() {
   const [paymentMode, setPaymentMode] = useState<"cash" | "upi" | "card" | "credit">("cash");
   const [isProcessing, setIsProcessing] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const sync = useSyncStatus();
   
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -174,10 +220,7 @@ export default function Billing() {
           </div>
           <div className="flex-1">
             <h1 className="text-2xl font-bold tracking-tight">Point of Sale</h1>
-            <p className="text-sm text-muted-foreground flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-              Local Database Active
-            </p>
+            <SyncBadge status={sync.status} pendingCount={sync.pendingCount} />
           </div>
         </div>
 

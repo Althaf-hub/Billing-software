@@ -3,6 +3,7 @@ import Login from "./pages/Login";
 import Billing from "./pages/Billing";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { startSync, stopSync } from "./lib/sync";
 
 // We use HashRouter because BrowserRouter can cause issues with file:// protocol in Tauri
 export default function App() {
@@ -12,11 +13,17 @@ export default function App() {
   useEffect(() => {
     // Initialize the local SQLite DB on app start
     invoke("init_db")
-      .then(() => setDbReady(true))
+      .then(() => {
+        setDbReady(true);
+        // Start background sync once DB is available
+        startSync();
+      })
       .catch((err) => {
         console.error("Failed to init DB:", err);
         setDbError(err as string);
       });
+
+    return () => { stopSync(); };
   }, []);
 
   if (dbError) {

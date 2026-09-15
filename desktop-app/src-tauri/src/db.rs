@@ -65,6 +65,36 @@ pub struct ExpenseInput {
     pub amount: f64,
 }
 
+/// Argument type for mark_sales_synced — maps local sale id to the server-assigned invoice number.
+#[derive(Serialize, Deserialize)]
+pub struct SyncedSaleEntry {
+    pub id: String,
+    pub invoice_number: Option<i64>,
+    pub conflict_flagged: Option<i32>,
+}
+
+/// Row type for a product coming back from the pull response.
+#[derive(Serialize, Deserialize)]
+pub struct RemoteProduct {
+    pub id: String,
+    pub name: String,
+    pub barcode: Option<String>,
+    pub price: f64,
+    pub stock_qty: i32,
+    pub low_stock_threshold: Option<i32>,
+    pub updated_at: Option<String>,
+}
+
+/// Row type for a customer coming back from the pull response.
+#[derive(Serialize, Deserialize)]
+pub struct RemoteCustomer {
+    pub id: String,
+    pub name: String,
+    pub phone: Option<String>,
+    pub credit_balance: Option<f64>,
+    pub created_at: Option<String>,
+}
+
 #[tauri::command]
 pub fn init_db(app_handle: tauri::AppHandle, state: State<'_, DbState>) -> Result<(), String> {
     // Determine path (in memory for now, or app data dir)
@@ -275,36 +305,253 @@ pub fn save_expense(state: State<'_, DbState>, expense: ExpenseInput) -> Result<
 
 #[tauri::command]
 pub fn get_pending_sync(state: State<'_, DbState>) -> Result<String, String> {
-    // For simplicity, we can return JSON strings of arrays for each table where synced = 0
-    // This is a minimal implementation.
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("DB not initialized")?;
 
-    let mut sales_stmt = conn.prepare("SELECT id, sold_by, customer_id, discount_amount, total_amount, payment_mode, device_id, created_at FROM sales WHERE synced = 0").map_err(|e| e.to_string())?;
-    
-    // We would serialize these manually or use a struct. Let's use serde_json inline to build it.
-    let sales: Vec<serde_json::Value> = sales_stmt.query_map([], |row| {
-        Ok(serde_json::json!({
-            "id": row.get::<_, String>(0)?,
-            "sold_by": row.get::<_, String>(1)?,
-            "customer_id": row.get::<_, Option<String>>(2)?,
-            "discount_amount": row.get::<_, f64>(3)?,
-            "total_amount": row.get::<_, f64>(4)?,
-            "payment_mode": row.get::<_, Option<String>>(5)?,
-            "device_id": row.get::<_, Option<String>>(6)?,
-            "created_at": row.get::<_, String>(7)?,
-            // items would need to be fetched separately, or we just rely on client to pull them.
-            // For full robustness we should fetch items here as well.
-        }))
-    }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
+    // ── Pending sales (with their items) ──────────────────────────────────────
+    let mut sales_stmt = conn
+        .prepare(
+            "SELECT id, sold_by, customer_id, discount_amount, total_amount, \
+             payment_mode, device_id, created_at \
+             FROM sales WHERE synced = 0 ORDER BY created_at",
+        )
+        .map_err(|e| e.to_string())?;
 
-    // In a real app we fetch all items for each sale here, but the sync structure depends on exact payload API expects.
-    
+    let sale_rows: Vec<(String, serde_json::Value)> = sales_stmt
+        .query_map([], |row| {
+            let sale_id: String = row.get(0)?;
+            Ok((
+                sale_id.clone(),
+                serde_json::json!({
+                    "id": sale_id,
+                    "sold_by": row.get::<_, String>(1)?,
+                    "customer_id": row.get::<_, Option<String>>(2)?,
+                    "discount_amount": row.get::<_, f64>(3)?,
+                    "total_amount": row.get::<_, f64>(4)?,
+                    "payment_mode": row.get::<_, Option<String>>(5)?,
+                    "device_id": row.get::<_, Option<String>>(6)?,
+                    "created_at": row.get::<_, String>(7)?,
+                }),
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+
+    // For each pending sale, fetch its line items
+    let mut sales: Vec<serde_json::Value> = Vec::new();
+    for (sale_id, mut sale_json) in sale_rows {
+        let mut items_stmt = conn
+            .prepare(
+                "SELECT product_id, quantity, price_at_sale \
+                 FROM sale_items WHERE sale_id = ?",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let items: Vec<serde_json::Value> = items_stmt
+            .query_map([&sale_id], |row| {
+                Ok(serde_json::json!({
+                    "product_id": row.get::<_, String>(0)?,
+                    "quantity": row.get::<_, i32>(1)?,
+                    "price_at_sale": row.get::<_, f64>(2)?,
+                }))
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .collect();
+
+        sale_json["items"] = serde_json::Value::Array(items);
+        sales.push(sale_json);
+    }
+
+    // ── Pending credit payments ───────────────────────────────────────────────
+    let mut cp_stmt = conn
+        .prepare(
+            "SELECT id, customer_id, amount, received_by, created_at \
+             FROM credit_payments WHERE synced = 0 ORDER BY created_at",
+        )
+        .map_err(|e| e.to_string())?;
+    let credit_payments: Vec<serde_json::Value> = cp_stmt
+        .query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "customer_id": row.get::<_, String>(1)?,
+                "amount": row.get::<_, f64>(2)?,
+                "received_by": row.get::<_, Option<String>>(3)?,
+                "created_at": row.get::<_, String>(4)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+
+    // ── Pending expenses ──────────────────────────────────────────────────────
+    let mut exp_stmt = conn
+        .prepare(
+            "SELECT id, label, amount, created_at FROM expenses WHERE synced = 0 ORDER BY created_at",
+        )
+        .map_err(|e| e.to_string())?;
+    let expenses: Vec<serde_json::Value> = exp_stmt
+        .query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "label": row.get::<_, String>(1)?,
+                "amount": row.get::<_, f64>(2)?,
+                "created_at": row.get::<_, String>(3)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+
+    // ── Pending purchases (with items) ────────────────────────────────────────
+    let mut pur_stmt = conn
+        .prepare(
+            "SELECT id, vendor_id, total_amount, is_return, created_by, created_at \
+             FROM purchases WHERE synced = 0 ORDER BY created_at",
+        )
+        .map_err(|e| e.to_string())?;
+    let purchase_rows: Vec<(String, serde_json::Value)> = pur_stmt
+        .query_map([], |row| {
+            let pur_id: String = row.get(0)?;
+            Ok((
+                pur_id.clone(),
+                serde_json::json!({
+                    "id": pur_id,
+                    "vendor_id": row.get::<_, Option<String>>(1)?,
+                    "total_amount": row.get::<_, f64>(2)?,
+                    "is_return": row.get::<_, i32>(3)?,
+                    "created_by": row.get::<_, Option<String>>(4)?,
+                    "created_at": row.get::<_, String>(5)?,
+                }),
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+
+    let mut purchases: Vec<serde_json::Value> = Vec::new();
+    for (pur_id, mut pur_json) in purchase_rows {
+        let mut pi_stmt = conn
+            .prepare(
+                "SELECT product_id, quantity, cost_price FROM purchase_items WHERE purchase_id = ?",
+            )
+            .map_err(|e| e.to_string())?;
+        let items: Vec<serde_json::Value> = pi_stmt
+            .query_map([&pur_id], |row| {
+                Ok(serde_json::json!({
+                    "product_id": row.get::<_, String>(0)?,
+                    "quantity": row.get::<_, i32>(1)?,
+                    "cost_price": row.get::<_, f64>(2)?,
+                }))
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .collect();
+        pur_json["items"] = serde_json::Value::Array(items);
+        purchases.push(pur_json);
+    }
+
     let result = serde_json::json!({
-        "sales": sales
+        "sales": sales,
+        "credit_payments": credit_payments,
+        "expenses": expenses,
+        "purchases": purchases,
     });
-    
     Ok(result.to_string())
+}
+
+/// After a successful push, update local sales with the server-assigned invoice numbers
+/// and mark them synced. Conflict-flagged sales are also marked (conflict_flagged = 1).
+#[tauri::command]
+pub fn mark_sales_synced(
+    state: State<'_, DbState>,
+    entries: Vec<SyncedSaleEntry>,
+    flagged_ids: Vec<String>,
+) -> Result<(), String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("DB not initialized")?;
+
+    for entry in &entries {
+        let is_flagged: i32 = if flagged_ids.contains(&entry.id) { 1 } else { 0 };
+        conn.execute(
+            "UPDATE sales SET synced = 1, invoice_number = COALESCE(?, invoice_number), \
+             conflict_flagged = ? WHERE id = ?",
+            params![entry.invoice_number, is_flagged, entry.id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    // Mark all other pending tables synced too (credit_payments, expenses, purchases)
+    // Simple approach: mark everything synced = 0 → 1 that was sent
+    conn.execute_batch(
+        "UPDATE credit_payments SET synced = 1 WHERE synced = 0; \
+         UPDATE expenses SET synced = 1 WHERE synced = 0; \
+         UPDATE purchases SET synced = 1 WHERE synced = 0;",
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Apply catalog data pulled from the server — upserts products and customers.
+/// Also upserts any remote sales that don't exist locally (from other devices).
+#[tauri::command]
+pub fn apply_remote_catalog(
+    state: State<'_, DbState>,
+    products: Vec<RemoteProduct>,
+    customers: Vec<RemoteCustomer>,
+) -> Result<(), String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("DB not initialized")?;
+
+    for product in &products {
+        conn.execute(
+            "INSERT INTO products \
+             (id, name, barcode, price, stock_qty, low_stock_threshold, updated_at, synced) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1) \
+             ON CONFLICT(id) DO UPDATE SET \
+               name = excluded.name, \
+               barcode = excluded.barcode, \
+               price = excluded.price, \
+               stock_qty = excluded.stock_qty, \
+               low_stock_threshold = excluded.low_stock_threshold, \
+               updated_at = excluded.updated_at, \
+               synced = 1",
+            params![
+                product.id,
+                product.name,
+                product.barcode,
+                product.price,
+                product.stock_qty,
+                product.low_stock_threshold.unwrap_or(5),
+                product.updated_at,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    for customer in &customers {
+        conn.execute(
+            "INSERT INTO customers (id, name, phone, credit_balance, created_at, synced) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 1) \
+             ON CONFLICT(id) DO UPDATE SET \
+               name = excluded.name, \
+               phone = excluded.phone, \
+               credit_balance = excluded.credit_balance, \
+               synced = 1",
+            params![
+                customer.id,
+                customer.name,
+                customer.phone,
+                customer.credit_balance.unwrap_or(0.0),
+                customer.created_at,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

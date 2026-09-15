@@ -22,6 +22,8 @@ pub fn run() {
             db::save_expense,
             db::get_pending_sync,
             db::mark_synced,
+            db::mark_sales_synced,
+            db::apply_remote_catalog,
             db::backup_db
         ])
         .run(tauri::generate_context!())

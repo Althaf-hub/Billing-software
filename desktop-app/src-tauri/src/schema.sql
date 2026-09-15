@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS sales (
   payment_mode TEXT CHECK (payment_mode IN ('cash','upi','card','credit')),
   device_id TEXT,
   synced INTEGER DEFAULT 0,
+  conflict_flagged INTEGER DEFAULT 0, -- Set to 1 by server when sale would take stock negative
   created_at TEXT DEFAULT (datetime('now'))
 );
 
