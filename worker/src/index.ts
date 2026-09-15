@@ -1,20 +1,25 @@
-import { AutoRouter } from 'itty-router';
+import { AutoRouter, cors } from 'itty-router';
 import type { Env } from './types';
 import { authMiddleware, json } from './middleware';
 
 // Route handlers
 import { handleLogin } from './routes/auth';
 import { listProducts, createProduct, updateProduct, deleteProduct } from './routes/products';
-import { createSale, listSales } from './routes/sales';
-import { dailyReport, monthlyReport } from './routes/reports';
+import { createSale, listSales, getSaleInvoice } from './routes/sales';
+import { dailyReport, monthlyReport, stockReport, creditReport, expenseReport } from './routes/reports';
 import { createUser, deleteUser } from './routes/users';
-import { listCustomers, createCustomer, recordPayment } from './routes/customers';
+import { listCustomers, createCustomer, recordPayment, customerStatement } from './routes/customers';
 import { listVendors, createVendor } from './routes/vendors';
 import { createPurchase, returnPurchase } from './routes/purchases';
 import { listExpenses, createExpense } from './routes/expenses';
 import { syncPush, syncPull } from './routes/sync';
 
-const router = AutoRouter();
+const { preflight, corsify } = cors();
+
+const router = AutoRouter({
+  before: [preflight],
+  finally: [corsify],
+});
 
 // ── Public route ──────────────────────────────────────────────────────────────
 router.post('/auth/login', (req: Request, env: Env) => handleLogin(req, env));
@@ -40,10 +45,14 @@ router.delete('/products/:id', withAuth((req, env, user, { params }) => deletePr
 // ── Sales ─────────────────────────────────────────────────────────────────────
 router.post('/sales', withAuth(createSale));
 router.get('/sales',  withAuth(listSales));
+router.get('/sales/:id/invoice', withAuth((req, env, user, { params }) => getSaleInvoice(req, env, user, params.id)));
 
 // ── Reports ───────────────────────────────────────────────────────────────────
 router.get('/reports/daily',   withAuth(dailyReport));
 router.get('/reports/monthly', withAuth(monthlyReport));
+router.get('/reports/stock',   withAuth(stockReport));
+router.get('/reports/credit',  withAuth(creditReport));
+router.get('/reports/expenses', withAuth(expenseReport));
 
 // ── Staff ─────────────────────────────────────────────────────────────────────
 router.post('/users',        withAuth(createUser));
@@ -53,6 +62,7 @@ router.delete('/users/:id',  withAuth((req, env, user, { params }) => deleteUser
 router.get('/customers',                    withAuth(listCustomers));
 router.post('/customers',                   withAuth(createCustomer));
 router.post('/customers/:id/payment',       withAuth((req, env, user, { params }) => recordPayment(req, env, user, params.id)));
+router.get('/customers/:id/statement',      withAuth((req, env, user, { params }) => customerStatement(req, env, user, params.id)));
 
 // ── Vendors ───────────────────────────────────────────────────────────────────
 router.get('/vendors',  withAuth(listVendors));

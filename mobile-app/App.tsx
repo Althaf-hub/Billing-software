@@ -14,7 +14,7 @@ import BillingScreen from './src/screens/BillingScreen';
 import CustomersScreen from './src/screens/CustomersScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import SyncIndicator from './src/components/SyncIndicator';
-import { syncNow } from './src/lib/sync';
+import { startSyncEngine, stopSyncEngine } from './src/lib/sync';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -79,10 +79,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isReady || !jwt) return;
-    void syncNow().catch(() => {
-      // Offline use is expected; the header keeps the queued-sale status visible.
-    });
+    if (!isReady || !jwt) {
+      // Stop the engine on logout
+      stopSyncEngine();
+      return;
+    }
+    // Start background engine (also triggers an immediate sync)
+    startSyncEngine();
+    return () => { stopSyncEngine(); };
   }, [isReady, jwt]);
 
   if (!isReady) {

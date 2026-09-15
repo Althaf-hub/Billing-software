@@ -1,9 +1,12 @@
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/Login";
 import Billing from "./pages/Billing";
+import Reports from "./pages/Reports";
+import Customers from "./pages/Customers";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { startSync, stopSync } from "./lib/sync";
+import { ToastProvider } from "./components/ui/toast";
 
 // We use HashRouter because BrowserRouter can cause issues with file:// protocol in Tauri
 export default function App() {
@@ -46,6 +49,7 @@ export default function App() {
   }
 
   return (
+    <ToastProvider>
     <HashRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
@@ -56,7 +60,10 @@ export default function App() {
             localStorage.getItem("jwt") ? <Billing /> : <Navigate to="/login" />
           } 
         />
+        <Route path="/reports" element={localStorage.getItem("jwt") ? <Reports /> : <Navigate to="/login" />} />
+        <Route path="/customers" element={localStorage.getItem("jwt") ? <Customers /> : <Navigate to="/login" />} />
       </Routes>
     </HashRouter>
+    </ToastProvider>
   );
 }

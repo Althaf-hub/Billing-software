@@ -23,6 +23,7 @@ pub struct Customer {
     pub name: String,
     pub phone: Option<String>,
     pub credit_balance: f64,
+    pub credit_limit: f64,
     pub synced: i32,
 }
 
@@ -106,6 +107,8 @@ pub fn init_db(app_handle: tauri::AppHandle, state: State<'_, DbState>) -> Resul
 
     let schema = include_str!("schema.sql");
     conn.execute_batch(schema).map_err(|e| e.to_string())?;
+    // Migrate devices created before credit limits were introduced.
+    let _ = conn.execute("ALTER TABLE customers ADD COLUMN credit_limit REAL DEFAULT 5000", []);
 
     *state.0.lock().unwrap() = Some(conn);
     Ok(())
@@ -211,6 +214,15 @@ pub fn get_products(state: State<'_, DbState>) -> Result<Vec<Product>, String> {
 }
 
 #[tauri::command]
+pub fn get_customers(state: State<'_, DbState>) -> Result<Vec<Customer>, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("DB not initialized")?;
+    let mut stmt = conn.prepare("SELECT id, name, phone, credit_balance, credit_limit, synced FROM customers ORDER BY name").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| Ok(Customer { id: row.get(0)?, name: row.get(1)?, phone: row.get(2)?, credit_balance: row.get(3)?, credit_limit: row.get(4)?, synced: row.get(5)? })).map_err(|e| e.to_string())?;
+    rows.map(|row| row.map_err(|e| e.to_string())).collect()
+}
+
+#[tauri::command]
 pub fn update_stock(state: State<'_, DbState>, product_id: String, delta: i32) -> Result<(), String> {
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("DB not initialized")?;
@@ -223,14 +235,14 @@ pub fn update_stock(state: State<'_, DbState>, product_id: String, delta: i32) -
 }
 
 #[tauri::command]
-pub fn save_customer(state: State<'_, DbState>, name: String, phone: Option<String>) -> Result<String, String> {
+pub fn save_customer(state: State<'_, DbState>, name: String, phone: Option<String>, credit_limit: Option<f64>) -> Result<String, String> {
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("DB not initialized")?;
 
     let id = Uuid::new_v4().to_string();
     conn.execute(
-        "INSERT INTO customers (id, name, phone, synced) VALUES (?1, ?2, ?3, 0)",
-        params![id, name, phone],
+        "INSERT INTO customers (id, name, phone, credit_limit, synced) VALUES (?1, ?2, ?3, ?4, 0)",
+        params![id, name, phone, credit_limit.unwrap_or(5000.0)],
     ).map_err(|e| e.to_string())?;
     Ok(id)
 }
@@ -241,6 +253,8 @@ pub fn record_credit_payment(state: State<'_, DbState>, customer_id: String, amo
     let conn = guard.as_mut().ok_or("DB not initialized")?;
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let balance: f64 = tx.query_row("SELECT credit_balance FROM customers WHERE id = ?", [&customer_id], |row| row.get(0)).map_err(|e| e.to_string())?;
+    if amount <= 0.0 || amount > balance { return Err("Payment must be positive and cannot exceed the outstanding balance".into()); }
     
     let payment_id = Uuid::new_v4().to_string();
     tx.execute(
@@ -255,6 +269,18 @@ pub fn record_credit_payment(state: State<'_, DbState>, customer_id: String, amo
 
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_customer_statement(state: State<'_, DbState>, customer_id: String) -> Result<String, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("DB not initialized")?;
+    let customer: serde_json::Value = conn.query_row("SELECT json_object('id', id, 'name', name, 'phone', phone, 'credit_balance', credit_balance, 'credit_limit', credit_limit) FROM customers WHERE id = ?", [&customer_id], |row| row.get(0)).map_err(|e| e.to_string()).and_then(|raw: String| serde_json::from_str(&raw).map_err(|e| e.to_string()))?;
+    let mut stmt = conn.prepare("SELECT created_at, 'sale' AS type, total_amount - discount_amount AS amount, invoice_number AS reference FROM sales WHERE customer_id = ? AND payment_mode = 'credit' UNION ALL SELECT created_at, 'payment' AS type, -amount AS amount, id AS reference FROM credit_payments WHERE customer_id = ? ORDER BY created_at").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(params![customer_id, customer_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?, row.get::<_, Option<String>>(3)?))).map_err(|e| e.to_string())?;
+    let mut balance = 0.0; let mut entries = Vec::new();
+    for row in rows { let (created_at, kind, amount, reference) = row.map_err(|e| e.to_string())?; balance += amount; entries.push(serde_json::json!({"created_at":created_at,"type":kind,"amount":amount,"reference":reference,"running_balance":balance})); }
+    Ok(serde_json::json!({"customer": customer, "entries": entries}).to_string())
 }
 
 #[tauri::command]

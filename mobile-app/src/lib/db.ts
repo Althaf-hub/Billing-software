@@ -62,6 +62,7 @@ export async function initDb() {
       payment_mode TEXT CHECK (payment_mode IN ('cash','upi','card','credit')),
       device_id TEXT,
       synced INTEGER DEFAULT 1,
+      conflict_flagged INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -215,19 +216,28 @@ export async function getSaleItems(saleId: string) {
   );
 }
 
-export async function markSalesSynced(saleIds: string[], invoiceNumbers: Record<string, number>) {
+export async function markSalesSynced(
+  saleIds: string[],
+  invoiceNumbers: Record<string, number>,
+  flaggedIds: string[] = [],
+) {
   const db = await getDb();
   await db.withExclusiveTransactionAsync(async (transaction) => {
     for (const saleId of saleIds) {
+      const isConflict = flaggedIds.includes(saleId) ? 1 : 0;
       await transaction.runAsync(
-        'UPDATE sales SET synced = 1, invoice_number = COALESCE(?, invoice_number) WHERE id = ?',
-        [invoiceNumbers[saleId] ?? null, saleId],
+        'UPDATE sales SET synced = 1, invoice_number = COALESCE(?, invoice_number), conflict_flagged = ? WHERE id = ?',
+        [invoiceNumbers[saleId] ?? null, isConflict, saleId],
       );
       await transaction.runAsync(
         `UPDATE products SET synced = 1 WHERE id IN (SELECT product_id FROM sale_items WHERE sale_id = ?)`,
         [saleId],
       );
     }
+    // Mark all other pending tables as synced
+    await transaction.runAsync('UPDATE credit_payments SET synced = 1 WHERE synced = 0');
+    await transaction.runAsync('UPDATE expenses SET synced = 1 WHERE synced = 0');
+    await transaction.runAsync('UPDATE purchases SET synced = 1 WHERE synced = 0');
   });
 }
 
@@ -287,10 +297,56 @@ export async function saveSale(sale: any, items: any[]) {
   return saleId;
 }
 
+export async function getPendingCreditPayments() {
+  const db = await getDb();
+  return db.getAllAsync<{
+    id: string;
+    customer_id: string;
+    amount: number;
+    received_by: string | null;
+    created_at: string;
+  }>('SELECT id, customer_id, amount, received_by, created_at FROM credit_payments WHERE synced = 0 ORDER BY created_at');
+}
+
+export async function getPendingExpenses() {
+  const db = await getDb();
+  return db.getAllAsync<{
+    id: string;
+    label: string;
+    amount: number;
+    created_at: string;
+  }>('SELECT id, label, amount, created_at FROM expenses WHERE synced = 0 ORDER BY created_at');
+}
+
+export async function getPendingPurchases() {
+  const db = await getDb();
+  const purchases = await db.getAllAsync<{
+    id: string;
+    vendor_id: string | null;
+    total_amount: number;
+    is_return: number;
+    created_by: string | null;
+    created_at: string;
+  }>('SELECT id, vendor_id, total_amount, is_return, created_by, created_at FROM purchases WHERE synced = 0 ORDER BY created_at');
+
+  // Attach items to each purchase
+  return Promise.all(
+    purchases.map(async (purchase) => ({
+      ...purchase,
+      items: await db.getAllAsync<{ product_id: string; quantity: number; cost_price: number }>(
+        'SELECT product_id, quantity, cost_price FROM purchase_items WHERE purchase_id = ?',
+        [purchase.id],
+      ),
+    })),
+  );
+}
+
 export async function getPendingSyncCount() {
   const db = await getDb();
-  // Simply summing up pending records across sales and products for the UI indicator
   const salesCount = await db.getFirstAsync<{count: number}>('SELECT COUNT(*) as count FROM sales WHERE synced = 0');
   const productsCount = await db.getFirstAsync<{count: number}>('SELECT COUNT(*) as count FROM products WHERE synced = 0');
-  return (salesCount?.count || 0) + (productsCount?.count || 0);
+  const creditCount = await db.getFirstAsync<{count: number}>('SELECT COUNT(*) as count FROM credit_payments WHERE synced = 0');
+  const expenseCount = await db.getFirstAsync<{count: number}>('SELECT COUNT(*) as count FROM expenses WHERE synced = 0');
+  const purchaseCount = await db.getFirstAsync<{count: number}>('SELECT COUNT(*) as count FROM purchases WHERE synced = 0');
+  return (salesCount?.count || 0) + (productsCount?.count || 0) + (creditCount?.count || 0) + (expenseCount?.count || 0) + (purchaseCount?.count || 0);
 }

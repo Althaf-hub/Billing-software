@@ -57,3 +57,25 @@ export function readJwtClaims(token: string): { user_id: string; shop_id: string
   if (!claims.user_id || !claims.shop_id || !claims.role) throw new Error('The session token is incomplete.');
   return claims;
 }
+
+// ── Sync state store ──────────────────────────────────────────────────────────
+
+export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'pending' | 'error' | 'offline';
+
+interface SyncState {
+  status: SyncStatus;
+  pendingCount: number;
+  lastSyncAt: string | null;
+  setSyncStatus: (status: SyncStatus) => void;
+  setPendingCount: (count: number) => void;
+  setLastSyncAt: (ts: string) => void;
+}
+
+export const useSyncStore = create<SyncState>((set) => ({
+  status: 'idle',
+  pendingCount: 0,
+  lastSyncAt: null,
+  setSyncStatus: (status) => set({ status }),
+  setPendingCount: (count) => set((prev) => ({ pendingCount: count, status: count > 0 && prev.status === 'synced' ? 'pending' : prev.status })),
+  setLastSyncAt: (ts) => set({ lastSyncAt: ts }),
+}));

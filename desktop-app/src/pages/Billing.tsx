@@ -1,12 +1,16 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { Search, ShoppingCart, Plus, Minus, X, CreditCard, Banknote, Smartphone, User, ArrowRight, Share2, AlertCircle, RefreshCw, WifiOff, CheckCircle2, Clock } from "lucide-react";
+import { Search, ShoppingCart, Plus, Minus, X, CreditCard, Banknote, Smartphone, User, ArrowRight, Share2, AlertCircle, RefreshCw, WifiOff, CheckCircle2, Clock, Package } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { api, Product } from "../lib/api";
+import { api, Product, type Customer } from "../lib/api";
 import { useSyncStatus } from "../lib/sync";
+import { AppShell } from "../components/layout/AppShell";
+import { DataTable, type DataTableColumn } from "../components/ui/data-table";
+import { StatCard } from "../components/ui/stat-card";
+import { useToast } from "../components/ui/toast";
 
 type CartItem = Product & {
   cartQuantity: number;
@@ -61,17 +65,20 @@ export default function Billing() {
   const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [customerPhone, setCustomerPhone] = useState("");
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customerId, setCustomerId] = useState("");
   const [paymentMode, setPaymentMode] = useState<"cash" | "upi" | "card" | "credit">("cash");
   const [isProcessing, setIsProcessing] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
   const sync = useSyncStatus();
+  const { toast } = useToast();
   
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     // Load products from local DB on mount
     loadProducts();
+    api.getCustomers().then(setCustomers).catch(() => setCustomers([]));
     // Focus search on mount for barcode scanners
     searchInputRef.current?.focus();
   }, []);
@@ -151,13 +158,16 @@ export default function Billing() {
   const subtotal = cart.reduce((acc, item) => acc + (item.price * item.cartQuantity), 0);
   const totalDiscount = cart.reduce((acc, item) => acc + item.itemDiscount, 0);
   const total = subtotal - totalDiscount;
+  const customerPhone = customers.find((customer) => customer.id === customerId)?.phone ?? "";
 
   const handleCompleteSale = async () => {
     if (cart.length === 0) return;
-    if (paymentMode === "credit" && !customerPhone) {
-      alert("Customer phone is required for credit sales.");
+    const customer = customers.find((item) => item.id === customerId);
+    if (paymentMode === "credit" && !customer) {
+      toast("Select a customer before recording a credit sale.", "error");
       return;
     }
+    if (paymentMode === "credit" && customer && customer.credit_balance + total > customer.credit_limit) toast(`${customer.name} will exceed their ₹${customer.credit_limit.toFixed(0)} credit limit.`, "error");
 
     setIsProcessing(true);
     setWarnings([]);
@@ -165,7 +175,7 @@ export default function Billing() {
     try {
       const saleInput = {
         sold_by: localStorage.getItem("user_id") || "user-admin-001",
-        customer_id: null, // We should lookup or create customer, simplified here
+        customer_id: customerId || null,
         discount_amount: totalDiscount,
         total_amount: total,
         payment_mode: paymentMode,
@@ -182,16 +192,16 @@ export default function Billing() {
       if (res.warnings && res.warnings.length > 0) {
         setWarnings(res.warnings);
       } else {
-        alert("Sale completed successfully!");
+        toast("Sale saved locally and queued for sync.");
       }
       
       setCart([]);
       setPaymentMode("cash");
-      setCustomerPhone("");
+      setCustomerId("");
       loadProducts(); // refresh stock
     } catch (err: any) {
       console.error(err);
-      alert("Failed to complete sale: " + err);
+      toast(`Failed to complete sale: ${String(err)}`, "error");
     } finally {
       setIsProcessing(false);
     }
@@ -207,21 +217,29 @@ export default function Billing() {
     return `https://wa.me/${customerPhone}?text=${encodeURIComponent(text)}`;
   };
 
+  const cartColumns: DataTableColumn<CartItem>[] = [
+    { header: "Product", cell: (item) => <div><p className="font-medium">{item.name}</p><p className="text-xs text-muted-foreground">₹{item.price.toFixed(2)} each</p></div> },
+    { header: "Quantity", className: "w-36", cell: (item) => <div className="flex w-fit items-center gap-1 rounded-lg border bg-muted/30 p-1"><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => updateQuantity(item.id, -1)} aria-label={`Remove one ${item.name}`}><Minus className="h-3.5 w-3.5" /></Button><span className="w-6 text-center text-sm font-medium">{item.cartQuantity}</span><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => updateQuantity(item.id, 1)} aria-label={`Add one ${item.name}`}><Plus className="h-3.5 w-3.5" /></Button></div> },
+    { header: "Total", className: "w-28 text-right", cell: (item) => <div className="flex items-center justify-end gap-1"><span className="font-semibold">₹{(item.price * item.cartQuantity).toFixed(2)}</span><Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => removeItem(item.id)} aria-label={`Remove ${item.name}`}><X className="h-4 w-4" /></Button></div> },
+  ];
+
   return (
-    <div className="flex h-screen bg-background overflow-hidden p-4 gap-4">
+    <AppShell title="Billing" subtitle="Create a sale even when you are offline">
+    <div className="flex h-full min-h-0 gap-4 overflow-hidden p-4">
       
       {/* LEFT PANEL: Cart & Search */}
       <div className="flex-1 flex flex-col gap-4 max-w-3xl border-r border-border/50 pr-4">
         
         {/* Search Header */}
-        <div className="flex items-center gap-4 bg-card p-4 rounded-xl border shadow-sm">
+        <div className="flex items-center gap-4 rounded-xl border bg-card p-4 shadow-sm">
           <div className="bg-primary/20 p-3 rounded-lg text-primary">
             <ShoppingCart className="w-6 h-6" />
           </div>
           <div className="flex-1">
-            <h1 className="text-2xl font-bold tracking-tight">Point of Sale</h1>
+            <h2 className="text-xl font-semibold tracking-tight">Point of Sale</h2>
             <SyncBadge status={sync.status} pendingCount={sync.pendingCount} />
           </div>
+          <div className="hidden w-44 xl:block"><StatCard label="Order total" value={`₹${total.toFixed(2)}`} detail={`${cart.length} line item${cart.length === 1 ? "" : "s"}`} icon={<Package className="h-4 w-4" />} /></div>
         </div>
 
         {/* Search Input */}
@@ -263,42 +281,7 @@ export default function Billing() {
             </CardTitle>
           </CardHeader>
           <div className="flex-1 overflow-auto p-0">
-            {cart.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-4 opacity-60">
-                <ShoppingCart className="w-16 h-16 mb-2" />
-                <p className="text-lg">Cart is empty</p>
-                <p className="text-sm">Scan items to begin</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-border/50">
-                {cart.map((item, idx) => (
-                  <div key={item.id + idx} className="p-4 flex items-center gap-4 hover:bg-muted/10 transition-colors">
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-base">{item.name}</h3>
-                      <p className="text-sm text-muted-foreground">₹{item.price} per item</p>
-                    </div>
-                    
-                    <div className="flex items-center gap-3 bg-muted/50 rounded-lg p-1 border">
-                      <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-background" onClick={() => updateQuantity(item.id, -1)}>
-                        <Minus className="w-4 h-4" />
-                      </Button>
-                      <span className="w-8 text-center font-medium">{item.cartQuantity}</span>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-background" onClick={() => updateQuantity(item.id, 1)}>
-                        <Plus className="w-4 h-4" />
-                      </Button>
-                    </div>
-                    
-                    <div className="w-24 text-right font-bold text-lg">
-                      ₹{item.price * item.cartQuantity}
-                    </div>
-                    
-                    <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10" onClick={() => removeItem(item.id)}>
-                      <X className="w-5 h-5" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <DataTable columns={cartColumns} rows={cart} getRowKey={(item) => item.id} emptyTitle="Cart is empty" emptyDescription="Scan or search for a product to begin." />
           </div>
         </Card>
       </div>
@@ -317,12 +300,11 @@ export default function Billing() {
               <Label className="flex items-center gap-2 text-muted-foreground">
                 <User className="w-4 h-4" /> Customer Details
               </Label>
-              <Input 
-                placeholder="Phone number (required for credit)" 
-                value={customerPhone}
-                onChange={e => setCustomerPhone(e.target.value)}
-                className="bg-background"
-              />
+              <select value={customerId} onChange={(event) => setCustomerId(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                <option value="">Walk-in customer</option>
+                {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name} · Due ₹{customer.credit_balance.toFixed(2)}</option>)}
+              </select>
+              <p className="text-xs text-muted-foreground">Choose a customer for credit sales. Add a new one in Customers.</p>
             </div>
 
             {/* Payment Modes */}
@@ -418,7 +400,7 @@ export default function Billing() {
             </Button>
 
             {/* Post-sale Actions */}
-            {warnings.length > 0 && customerPhone && (
+            {warnings.length > 0 && customers.find((customer) => customer.id === customerId)?.phone && (
               <Button 
                 variant="outline" 
                 className="w-full mt-3 h-12 flex gap-2 border-green-500/30 text-green-500 hover:bg-green-500 hover:text-white"
@@ -432,5 +414,6 @@ export default function Billing() {
 
       </div>
     </div>
+    </AppShell>
   );
 }

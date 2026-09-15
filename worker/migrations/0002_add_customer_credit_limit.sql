@@ -1,0 +1,1 @@
+ALTER TABLE customers ADD COLUMN credit_limit REAL DEFAULT 5000;

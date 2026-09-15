@@ -9,6 +9,7 @@ export interface Product {
   low_stock_threshold: number;
   synced: number;
 }
+export interface Customer { id: string; name: string; phone: string | null; credit_balance: number; credit_limit: number; synced: number; }
 
 export interface SaleItemInput {
   product_id: string;
@@ -78,6 +79,10 @@ export const api = {
   getProducts: async (): Promise<Product[]> => {
     return await invoke("get_products");
   },
+  getCustomers: async (): Promise<Customer[]> => invoke("get_customers"),
+  saveCustomer: async (name: string, phone: string | null, creditLimit = 5000): Promise<string> => invoke("save_customer", { name, phone, creditLimit }),
+  recordCreditPayment: async (customerId: string, amount: number, receivedBy: string | null): Promise<void> => invoke("record_credit_payment", { customerId, amount, receivedBy }),
+  getCustomerStatement: async (customerId: string): Promise<{ customer: Customer; entries: Array<{ created_at: string; type: string; amount: number; reference: string | null; running_balance: number }> }> => JSON.parse(await invoke<string>("get_customer_statement", { customerId })),
 
   saveSale: async (sale: SaleInput): Promise<{ id: string; warnings: string[] }> => {
     // The rust backend returns a JSON string, so we need to parse it

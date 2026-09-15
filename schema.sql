@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS customers (
   name TEXT NOT NULL,
   phone TEXT,
   credit_balance REAL DEFAULT 0,
+  credit_limit REAL DEFAULT 5000,
   created_at TEXT DEFAULT (datetime('now'))
 );
 

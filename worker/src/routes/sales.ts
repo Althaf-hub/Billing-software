@@ -36,6 +36,14 @@ export async function createSale(request: Request, env: Env, user: JwtPayload): 
   const invoice_number = row?.next_inv ?? 1;
 
   const saleId = crypto.randomUUID();
+  let creditWarning: string | null = null;
+  if (payment_mode === 'credit') {
+    if (!customer_id) return json({ error: 'customer_id is required for credit sales' }, 400);
+    const customer = await env.shop_billing_db.prepare('SELECT name, credit_balance, credit_limit FROM customers WHERE id = ? AND shop_id = ?').bind(customer_id, user.shop_id).first<{ name: string; credit_balance: number; credit_limit: number | null }>();
+    if (!customer) return json({ error: 'Customer not found' }, 404);
+    const limit = customer.credit_limit ?? 5000;
+    if (customer.credit_balance + total_amount - discount_amount > limit) creditWarning = `${customer.name} exceeds their credit limit of ₹${limit}.`;
+  }
 
   // Insert sale + all items in a batch (atomic)
   const stmts = [
@@ -70,7 +78,7 @@ export async function createSale(request: Request, env: Env, user: JwtPayload): 
   }
 
   await env.shop_billing_db.batch(stmts);
-  return json({ id: saleId, invoice_number }, 201);
+  return json({ id: saleId, invoice_number, warnings: creditWarning ? [creditWarning] : [] }, 201);
 }
 
 // GET /sales — admin gets all, salesman gets own
@@ -104,4 +112,31 @@ export async function listSales(request: Request, env: Env, user: JwtPayload): P
     .all();
 
   return json(results);
+}
+
+// GET /sales/:id/invoice — invoice data for client-side PDF printing.
+export async function getSaleInvoice(request: Request, env: Env, user: JwtPayload, saleId: string): Promise<Response> {
+  const deny = requireRole(user, 'admin', 'salesman');
+  if (deny) return deny;
+
+  const sale = await env.shop_billing_db.prepare(`
+    SELECT s.id, s.sold_by, s.invoice_number, s.total_amount, s.discount_amount, s.payment_mode, s.created_at,
+      u.name AS sold_by_name, c.name AS customer_name, c.phone AS customer_phone
+    FROM sales s JOIN users u ON u.id = s.sold_by
+    LEFT JOIN customers c ON c.id = s.customer_id
+    WHERE s.id = ? AND s.shop_id = ?`).bind(saleId, user.shop_id).first();
+  if (!sale) return json({ error: 'Sale not found' }, 404);
+
+  if (user.role === 'salesman' && (sale as { sold_by?: string }).sold_by !== user.user_id) {
+    return json({ error: 'Forbidden: this sale belongs to another user' }, 403);
+  }
+
+  const [items, shop] = await Promise.all([
+    env.shop_billing_db.prepare(`SELECT p.name, si.quantity, si.price_at_sale,
+      si.quantity * si.price_at_sale AS line_total
+      FROM sale_items si JOIN products p ON p.id = si.product_id
+      WHERE si.sale_id = ? ORDER BY p.name`).bind(saleId).all(),
+    env.shop_billing_db.prepare('SELECT name, logo_url FROM shops WHERE id = ?').bind(user.shop_id).first(),
+  ]);
+  return json({ shop, sale, items: items.results });
 }
