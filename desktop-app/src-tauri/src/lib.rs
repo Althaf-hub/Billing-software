@@ -1,9 +1,3 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 pub mod db;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -22,6 +16,10 @@ pub fn run() {
             db::get_customer_statement,
             db::save_purchase,
             db::save_expense,
+            db::get_expenses,
+            db::get_vendors,
+            db::save_vendor,
+            db::get_purchases,
             db::get_pending_sync,
             db::mark_synced,
             db::mark_sales_synced,

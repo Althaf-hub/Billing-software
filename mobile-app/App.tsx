@@ -5,7 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
 import { Text, View, ActivityIndicator } from 'react-native';
-import { ShoppingCart, Users, History } from 'lucide-react-native';
+import { ShoppingCart, Users, History, Package } from 'lucide-react-native';
 
 import { initDb, seedDummyData } from './src/lib/db';
 import { loadAuthState, useAuthStore } from './src/lib/store';
@@ -13,6 +13,7 @@ import LoginScreen from './src/screens/LoginScreen';
 import BillingScreen from './src/screens/BillingScreen';
 import CustomersScreen from './src/screens/CustomersScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
+import ProcurementScreen from './src/screens/ProcurementScreen';
 import SyncIndicator from './src/components/SyncIndicator';
 import { startSyncEngine, stopSyncEngine } from './src/lib/sync';
 
@@ -20,6 +21,7 @@ const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
 function MainTabs() {
+  const role = useAuthStore((s) => s.role);
   return (
     <Tab.Navigator
       screenOptions={{
@@ -55,6 +57,16 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => <History color={color} size={size} />,
         }}
       />
+      {role === 'admin' && (
+        <Tab.Screen
+          name="Procurement"
+          component={ProcurementScreen}
+          options={{
+            title: 'Procurement',
+            tabBarIcon: ({ color, size }) => <Package color={color} size={size} />,
+          }}
+        />
+      )}
     </Tab.Navigator>
   );
 }

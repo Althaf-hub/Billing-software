@@ -350,3 +350,97 @@ export async function getPendingSyncCount() {
   const purchaseCount = await db.getFirstAsync<{count: number}>('SELECT COUNT(*) as count FROM purchases WHERE synced = 0');
   return (salesCount?.count || 0) + (productsCount?.count || 0) + (creditCount?.count || 0) + (expenseCount?.count || 0) + (purchaseCount?.count || 0);
 }
+
+// ── Procurement ───────────────────────────────────────────────────────────────
+
+export async function getVendors(shopId: string) {
+  const db = await getDb();
+  return db.getAllAsync<{ id: string; name: string; phone: string | null; created_at: string }>(
+    'SELECT * FROM vendors WHERE shop_id = ? ORDER BY name',
+    [shopId],
+  );
+}
+
+export async function addVendor(shopId: string, name: string, phone: string) {
+  const db = await getDb();
+  const id = uuidv4();
+  await db.runAsync(
+    'INSERT INTO vendors (id, shop_id, name, phone) VALUES (?, ?, ?, ?)',
+    [id, shopId, name.trim(), phone.trim() || null],
+  );
+  return id;
+}
+
+export async function savePurchase(
+  shopId: string,
+  vendorId: string | null,
+  createdBy: string,
+  items: { product_id: string; quantity: number; cost_price: number }[],
+  isReturn = false,
+) {
+  const db = await getDb();
+  const purchaseId = uuidv4();
+  const totalAmount = items.reduce((sum, item) => sum + item.quantity * item.cost_price, 0);
+  const isReturnInt = isReturn ? 1 : 0;
+
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `INSERT INTO purchases (id, shop_id, vendor_id, total_amount, is_return, created_by, synced)
+       VALUES (?, ?, ?, ?, ?, ?, 0)`,
+      [purchaseId, shopId, vendorId ?? null, totalAmount, isReturnInt, createdBy],
+    );
+    for (const item of items) {
+      await db.runAsync(
+        `INSERT INTO purchase_items (id, purchase_id, product_id, quantity, cost_price)
+         VALUES (?, ?, ?, ?, ?)`,
+        [uuidv4(), purchaseId, item.product_id, item.quantity, item.cost_price],
+      );
+      // Purchase → stock IN; Return → stock OUT
+      const stockDelta = isReturn ? -item.quantity : item.quantity;
+      await db.runAsync(
+        `UPDATE products SET stock_qty = stock_qty + ?, synced = 0 WHERE id = ?`,
+        [stockDelta, item.product_id],
+      );
+    }
+  });
+
+  return purchaseId;
+}
+
+export async function getPurchases(shopId: string) {
+  const db = await getDb();
+  return db.getAllAsync<{
+    id: string;
+    vendor_id: string | null;
+    vendor_name: string | null;
+    total_amount: number;
+    is_return: number;
+    created_by: string | null;
+    created_at: string;
+  }>(
+    `SELECT p.*, v.name AS vendor_name
+     FROM purchases p
+     LEFT JOIN vendors v ON p.vendor_id = v.id
+     WHERE p.shop_id = ?
+     ORDER BY p.created_at DESC`,
+    [shopId],
+  );
+}
+
+export async function getExpenses(shopId: string) {
+  const db = await getDb();
+  return db.getAllAsync<{ id: string; label: string; amount: number; created_at: string }>(
+    'SELECT * FROM expenses WHERE shop_id = ? ORDER BY created_at DESC',
+    [shopId],
+  );
+}
+
+export async function addExpense(shopId: string, label: string, amount: number) {
+  const db = await getDb();
+  const id = uuidv4();
+  await db.runAsync(
+    `INSERT INTO expenses (id, shop_id, label, amount) VALUES (?, ?, ?, ?)`,
+    [id, shopId, label.trim(), amount],
+  );
+  return id;
+}

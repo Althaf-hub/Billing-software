@@ -3,6 +3,7 @@ import Login from "./pages/Login";
 import Billing from "./pages/Billing";
 import Reports from "./pages/Reports";
 import Customers from "./pages/Customers";
+import Procurement from "./pages/Procurement";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { startSync, stopSync } from "./lib/sync";
@@ -62,6 +63,7 @@ export default function App() {
         />
         <Route path="/reports" element={localStorage.getItem("jwt") ? <Reports /> : <Navigate to="/login" />} />
         <Route path="/customers" element={localStorage.getItem("jwt") ? <Customers /> : <Navigate to="/login" />} />
+        <Route path="/procurement" element={localStorage.getItem("jwt") ? <Procurement /> : <Navigate to="/login" />} />
       </Routes>
     </HashRouter>
     </ToastProvider>

@@ -10,8 +10,7 @@ const items = [
   { label: "Products", icon: Boxes, adminOnly: true },
   { label: "Customers", icon: Users, to: "/customers" },
   { label: "Reports", icon: BarChart3, to: "/reports", adminOnly: true },
-  { label: "Purchases", icon: PackagePlus, adminOnly: true },
-  { label: "Expenses", icon: CircleDollarSign, adminOnly: true },
+  { label: "Procurement", icon: PackagePlus, to: "/procurement", adminOnly: true },
   { label: "Staff", icon: ReceiptText, adminOnly: true },
   { label: "Settings", icon: Settings, adminOnly: true },
 ];

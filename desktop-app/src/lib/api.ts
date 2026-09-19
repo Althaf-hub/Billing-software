@@ -111,4 +111,31 @@ export const api = {
   ): Promise<void> => {
     await invoke("apply_remote_catalog", { products, customers });
   },
+
+  getVendors: async (): Promise<{ id: string; name: string; phone: string | null; created_at: string }[]> => {
+    const raw: string = await invoke("get_vendors");
+    return JSON.parse(raw);
+  },
+  saveVendor: async (name: string, phone: string | null): Promise<string> => invoke("save_vendor", { name, phone }),
+
+  getPurchases: async (): Promise<{
+    id: string; vendor_id: string | null; vendor_name: string | null;
+    total_amount: number; is_return: number; created_at: string;
+  }[]> => {
+    const raw: string = await invoke("get_purchases");
+    return JSON.parse(raw);
+  },
+  savePurchase: async (
+    vendorId: string | null,
+    totalAmount: number,
+    createdBy: string | null,
+    items: { product_id: string; quantity: number; cost_price: number }[],
+    isReturn: boolean
+  ): Promise<string> => invoke("save_purchase", { purchase: { vendor_id: vendorId, total_amount: totalAmount, created_by: createdBy, items }, isReturn }),
+
+  getExpenses: async (): Promise<{ id: string; label: string; amount: number; created_at: string }[]> => {
+    const raw: string = await invoke("get_expenses");
+    return JSON.parse(raw);
+  },
+  saveExpense: async (label: string, amount: number): Promise<string> => invoke("save_expense", { expense: { label, amount } }),
 };

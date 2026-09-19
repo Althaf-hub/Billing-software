@@ -330,6 +330,101 @@ pub fn save_expense(state: State<'_, DbState>, expense: ExpenseInput) -> Result<
 }
 
 #[tauri::command]
+pub fn get_expenses(state: State<'_, DbState>) -> Result<String, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("DB not initialized")?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, label, amount, created_at FROM expenses ORDER BY created_at DESC",
+    ).map_err(|e| e.to_string())?;
+
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "label": row.get::<_, String>(1)?,
+                "amount": row.get::<_, f64>(2)?,
+                "created_at": row.get::<_, String>(3)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+
+    Ok(serde_json::to_string(&rows).map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
+pub fn get_vendors(state: State<'_, DbState>) -> Result<String, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("DB not initialized")?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, name, phone, created_at FROM vendors ORDER BY name",
+    ).map_err(|e| e.to_string())?;
+
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "name": row.get::<_, String>(1)?,
+                "phone": row.get::<_, Option<String>>(2)?,
+                "created_at": row.get::<_, String>(3)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+
+    Ok(serde_json::to_string(&rows).map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
+pub fn save_vendor(state: State<'_, DbState>, name: String, phone: Option<String>) -> Result<String, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("DB not initialized")?;
+
+    let id = Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO vendors (id, name, phone, synced) VALUES (?1, ?2, ?3, 0)",
+        params![id, name.trim(), phone],
+    ).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn get_purchases(state: State<'_, DbState>) -> Result<String, String> {
+    let guard = state.0.lock().unwrap();
+    let conn = guard.as_ref().ok_or("DB not initialized")?;
+
+    let mut stmt = conn.prepare(
+        "SELECT p.id, p.vendor_id, v.name AS vendor_name, p.total_amount, p.is_return, p.created_at
+         FROM purchases p
+         LEFT JOIN vendors v ON p.vendor_id = v.id
+         ORDER BY p.created_at DESC",
+    ).map_err(|e| e.to_string())?;
+
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "vendor_id": row.get::<_, Option<String>>(1)?,
+                "vendor_name": row.get::<_, Option<String>>(2)?,
+                "total_amount": row.get::<_, f64>(3)?,
+                "is_return": row.get::<_, i32>(4)?,
+                "created_at": row.get::<_, String>(5)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+
+    Ok(serde_json::to_string(&rows).map_err(|e| e.to_string())?)
+}
+
+
+
+#[tauri::command]
 pub fn get_pending_sync(state: State<'_, DbState>) -> Result<String, String> {
     let guard = state.0.lock().unwrap();
     let conn = guard.as_ref().ok_or("DB not initialized")?;
